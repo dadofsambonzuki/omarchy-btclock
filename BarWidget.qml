@@ -152,12 +152,44 @@ BarWidget {
   }
 
   // ---- the bar's own appearance --------------------------------------------
-  // Double clicking the bar makes it see-through and picks a foreground colour
-  // that stays legible over whatever wallpaper is behind it. Both arrive from the
-  // shell as live bindings, so the panels can follow the bar in and out of
-  // transparency instead of sitting on it as slabs of theme background.
-  readonly property bool barTransparent: root.bar ? root.bar.transparent === true : false
+  // The bar's background is opaque, glassy or none. A see-through bar samples a
+  // foreground colour that stays legible over whatever wallpaper is behind it
+  // and hands it over as a live binding, so the panels can follow the bar in and
+  // out of transparency instead of sitting on it as slabs of theme background.
+  //
+  // A 4.5 shell tells a widget only whether the bar is fully clear, so the
+  // glassy setting is read from the bar's own config alongside it.
+  readonly property string barLook: {
+    if (root.configuredBarLook !== "") return root.configuredBarLook
+    return root.bar && root.bar.transparent === true ? "none" : "opaque"
+  }
+  readonly property bool barSeeThrough: root.barLook !== "opaque"
   readonly property color barForeground: root.bar ? root.bar.barForeground : Commons.Color.foreground
+
+  // shell.json normalises this to opaque, glassy or none; a config written
+  // before the setting existed says transparent instead, which is none.
+  property string configuredBarLook: ""
+  function readBarLook(raw) {
+    var look = ""
+    try {
+      var config = JSON.parse(String(raw || ""))
+      var bar = config && typeof config.bar === "object" && config.bar ? config.bar : {}
+      look = String(bar.background || "")
+      if (look !== "glassy" && look !== "none") look = bar.transparent === true ? "none" : "opaque"
+    } catch (e) {
+      look = ""
+    }
+    root.configuredBarLook = look
+  }
+
+  // The bar reloads this file itself, so a change arrives here as a rewrite.
+  FileView {
+    path: (Quickshell.env("HOME") || "") + "/.config/omarchy/shell.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.readBarLook(text())
+    onFileChanged: reload()
+  }
 
   // Closed set of mempool instances bin/btc-status knows how to read. Keeping
   // the list here as well means a typo lands on the default instance instead of
@@ -396,20 +428,21 @@ BarWidget {
 
   // ---- panel colours -------------------------------------------------------
   // Normally a panel is a little e-paper screen: dark on the theme background in
-  // dark mode, inverted in light mode. While the bar is transparent a panel is an
-  // outline instead, drawn in the bar's own contrast colour at low alpha and with
-  // the character in that same colour - the treatment the rest of the bar gets -
-  // so nothing hangs over the wallpaper in a colour picked for a solid bar.
+  // dark mode, inverted in light mode. While the bar is see-through - glassy or
+  // clear - a panel is an outline instead, drawn in the bar's own contrast
+  // colour at low alpha and with the character in that same colour - the
+  // treatment the rest of the bar gets - so nothing hangs over the wallpaper in
+  // a colour picked for a solid bar.
   //
   // A new block tints every panel towards the theme accent, the bar's version
   // of the orange LED flash (blockFlashColor 0xE04300) on the device.
-  // Light mode on a transparent bar inverts the outline: panels filled solid
+  // Light mode on a see-through bar inverts the outline: panels filled solid
   // in the bar's contrast colour, characters in whichever theme colour stands
   // out against it.
   function panelFill(solid) {
     var a = Commons.Color.accent
     var flashTint = Qt.rgba(a.r, a.g, a.b, root.flash * 0.85)
-    if (root.barTransparent && !solid) {
+    if (root.barSeeThrough && !solid) {
       if (!root.lightMode) return Qt.rgba(a.r, a.g, a.b, root.flash * 0.8)
       var fg = root.barForeground
       return root.flash > 0 ? Qt.tint(fg, flashTint) : fg
@@ -419,14 +452,14 @@ BarWidget {
   }
 
   function panelBorder(solid) {
-    if (root.barTransparent && !solid) return Util.alpha(root.barForeground, root.lightMode ? 0.9 : 0.4)
+    if (root.barSeeThrough && !solid) return Util.alpha(root.barForeground, root.lightMode ? 0.9 : 0.4)
     return root.lightMode
       ? Qt.darker(Commons.Color.foreground, 1.25)
       : Qt.rgba(Commons.Color.muted.r, Commons.Color.muted.g, Commons.Color.muted.b, 0.55)
   }
 
   function panelInk(solid) {
-    if (root.barTransparent && !solid) {
+    if (root.barSeeThrough && !solid) {
       if (!root.lightMode) return root.barForeground
       return root.barForeground.hslLightness > 0.5 ? Commons.Color.background : Commons.Color.foreground
     }
