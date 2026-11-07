@@ -160,6 +160,8 @@ BarWidget {
   // A 4.5 shell tells a widget only whether the bar is fully clear, so the
   // glassy setting is read from the bar's own config alongside it.
   readonly property string barLook: {
+    // A home-screen card is not on the bar, whatever the bar looks like.
+    if (root.home) return "opaque"
     if (root.configuredBarLook !== "") return root.configuredBarLook
     return root.bar && root.bar.transparent === true ? "none" : "opaque"
   }
