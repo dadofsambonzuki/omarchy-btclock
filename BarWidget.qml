@@ -2,11 +2,20 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 BarWidget {
   id: root
   moduleName: "kravens.btclock"
+
+  // ---- Omarchy Mobile's home screen ----------------------------------------
+  // Set by Widget.qml, which hosts this same item on a home-screen card: there
+  // is no bar then, the card sets the size, and the home screen owns settings.
+  property var home: null
+  property bool editing: false
+  // Someone can see it. Nothing is fetched or ticked otherwise.
+  property bool shown: true
 
   // ---- settings -----------------------------------------------------------
   // Settings arrive from shell.json and are treated as input: every one is
@@ -148,7 +157,7 @@ BarWidget {
   // shell as live bindings, so the panels can follow the bar in and out of
   // transparency instead of sitting on it as slabs of theme background.
   readonly property bool barTransparent: root.bar ? root.bar.transparent === true : false
-  readonly property color barForeground: root.bar ? root.bar.barForeground : Color.foreground
+  readonly property color barForeground: root.bar ? root.bar.barForeground : Commons.Color.foreground
 
   // Closed set of mempool instances bin/btc-status knows how to read. Keeping
   // the list here as well means a typo lands on the default instance instead of
@@ -398,30 +407,30 @@ BarWidget {
   // in the bar's contrast colour, characters in whichever theme colour stands
   // out against it.
   function panelFill(solid) {
-    var a = Color.accent
+    var a = Commons.Color.accent
     var flashTint = Qt.rgba(a.r, a.g, a.b, root.flash * 0.85)
     if (root.barTransparent && !solid) {
       if (!root.lightMode) return Qt.rgba(a.r, a.g, a.b, root.flash * 0.8)
       var fg = root.barForeground
       return root.flash > 0 ? Qt.tint(fg, flashTint) : fg
     }
-    var base = root.lightMode ? Color.foreground : Qt.darker(Color.background, 1.6)
+    var base = root.lightMode ? Commons.Color.foreground : Qt.darker(Commons.Color.background, 1.6)
     return root.flash > 0 ? Qt.tint(base, flashTint) : base
   }
 
   function panelBorder(solid) {
     if (root.barTransparent && !solid) return Util.alpha(root.barForeground, root.lightMode ? 0.9 : 0.4)
     return root.lightMode
-      ? Qt.darker(Color.foreground, 1.25)
-      : Qt.rgba(Color.muted.r, Color.muted.g, Color.muted.b, 0.55)
+      ? Qt.darker(Commons.Color.foreground, 1.25)
+      : Qt.rgba(Commons.Color.muted.r, Commons.Color.muted.g, Commons.Color.muted.b, 0.55)
   }
 
   function panelInk(solid) {
     if (root.barTransparent && !solid) {
       if (!root.lightMode) return root.barForeground
-      return root.barForeground.hslLightness > 0.5 ? Color.background : Color.foreground
+      return root.barForeground.hslLightness > 0.5 ? Commons.Color.background : Commons.Color.foreground
     }
-    return root.lightMode ? Color.background : Color.foreground
+    return root.lightMode ? Commons.Color.background : Commons.Color.foreground
   }
 
   // Centre the string across the panels, blanks either side.
@@ -541,7 +550,26 @@ BarWidget {
   // changed while one is in flight is not left waiting a whole interval.
   property bool refreshQueued: false
 
+  property double fetchedAt: 0
+
+  function isOld() {
+    return Date.now() - fetchedAt >= refreshSeconds * 1000
+  }
+
+  // Every layout edit rebuilds a card. The home screen keeps a value across
+  // that, so it starts from the last answer instead of a blank card and a
+  // fresh fetch.
+  function start() {
+    var kept = home ? home.cached : null
+    if (kept && applyPayload(kept.raw)) fetchedAt = kept.at
+    if (shown && isOld()) refresh()
+  }
+
+  // Back in view: catch up if the numbers are old, or a retry came due unseen.
+  onShownChanged: if (shown && (failures > 0 || isOld())) refresh()
+
   function refresh() {
+    fetchedAt = Date.now()
     if (statusProc.running) refreshQueued = true
     else statusProc.running = true
   }
@@ -574,7 +602,8 @@ BarWidget {
   // One notification per outage: a bar widget that quietly shows dashes is
   // easier to miss than the numbers it stopped showing.
   function notifyUnreachable() {
-    if (notified || !speaksForPeers()) return
+    // A phone losing signal is routine, and the dashes on its card say so.
+    if (notified || root.home || !speaksForPeers()) return
     notified = true
     notify("BTClock cannot reach a mempool instance",
            "Tried " + providerOrder.map(function (p) { return providerName(p) }).join(", ") + ". Retrying every " + retrySeconds + "s.")
@@ -705,7 +734,9 @@ BarWidget {
   readonly property bool opened: panelController.open
   property bool popoutSwitchClosing: false
 
-  function open() { panelController.show() }
+  // ponytail: a card builds this panel but never opens it, since its settings
+  // go through the home screen. Wrap it in a Loader if phones feel the memory.
+  function open() { if (!home) panelController.show() }
   function close() { panelController.hide() }
   function togglePanel() { opened ? close() : open() }
   function closeForPopoutSwitch() {
@@ -790,6 +821,7 @@ BarWidget {
         root.unreachable = false
         root.notified = false
         root.failures = 0
+        if (root.home) root.home.setCached({ raw: raw, at: Date.now() })
         root.checkNewBlock()
         return
       }
@@ -831,9 +863,8 @@ BarWidget {
 
   Timer {
     interval: root.refreshSeconds * 1000
-    running: true
+    running: root.shown
     repeat: true
-    triggeredOnStart: true
     onTriggered: root.refresh()
   }
 
@@ -841,12 +872,12 @@ BarWidget {
     id: retryTimer
     interval: root.retrySeconds * 1000
     repeat: false
-    onTriggered: root.refresh()
+    onTriggered: if (root.shown) root.refresh()
   }
 
   Timer {
     interval: 1000
-    running: !root.paused || root.now < root.focusUntil
+    running: root.shown && (!root.paused || root.now < root.focusUntil)
     repeat: true
     onTriggered: root.now = Date.now()
   }
@@ -857,6 +888,23 @@ BarWidget {
     loops: 3
     NumberAnimation { target: root; property: "flash"; to: 1; duration: 160; easing.type: Easing.OutCubic }
     NumberAnimation { target: root; property: "flash"; to: 0; duration: 440; easing.type: Easing.InCubic }
+  }
+
+  // ---- fitting a narrow screen ----------------------------------------------
+  // A desktop bar on a phone has no room to spare: at full size the row takes a
+  // quarter of the screen and lands on top of its neighbours.
+  readonly property real screenWidth: {
+    var w = root.QsWindow.window
+    return w && w.screen ? w.screen.width : 0
+  }
+  readonly property bool narrow: screenWidth > 0 && screenWidth < 720
+
+  // PanelRow's proportions turned around: the tallest panels whose row fits `w`.
+  // It rounds each panel and gap, so the estimate can land a few pixels over.
+  function fitCellHeight(w) {
+    var h = Math.floor(w / (cells * 0.74 + (cells - 1) * 0.14))
+    while (h > 1 && cells * Math.round(h * 0.74) + (cells - 1) * Math.max(1, Math.round(h * 0.14)) > w) h--
+    return h
   }
 
   // ---- rendering ----------------------------------------------------------
@@ -923,8 +971,12 @@ BarWidget {
   PanelRow {
     id: strip
     anchors.centerIn: parent
-    cellHeight: Math.max(10, root.barSize - Style.spaceReal(7))
-    spacing: Math.max(1, Math.round(root.barSize * 0.10))
+    readonly property real barCell: Math.max(10, root.barSize - Style.spaceReal(7))
+    cellHeight: root.home ? Math.min(root.height, root.fitCellHeight(root.width))
+      // A fifth of the screen, unless that many panels would turn unreadable.
+      : root.narrow ? Math.min(barCell, Math.max(12, root.fitCellHeight(root.screenWidth * 0.2)))
+      : barCell
+    spacing: Math.max(1, Math.round(root.home || root.narrow ? cellHeight * 0.14 : root.barSize * 0.10))
     cellText: root.cellChars()
     fill: root.panelFill(false)
     edge: root.panelBorder(false)
@@ -944,18 +996,25 @@ BarWidget {
 
   MouseArea {
     anchors.fill: parent
+    enabled: !root.editing
     acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
 
     // Left opens the settings panel; the other two mirror BTClock's buttons:
-    // middle holds the current screen, right and scroll step through.
+    // middle holds the current screen, right and scroll step through. On a
+    // home-screen card a tap steps; settings live in the home screen's edit mode.
     onClicked: function (mouse) {
       if (root.bar) root.bar.hideTooltip(root)
-      if (mouse.button === Qt.LeftButton) root.togglePanel()
+      if (root.home) root.advance()
+      else if (mouse.button === Qt.LeftButton) root.togglePanel()
       else if (mouse.button === Qt.MiddleButton) root.broadcast("togglePause")
       else root.broadcast("advance")
     }
+    // A hold on a card is the home screen's way into edit mode; letting go must
+    // not count as a tap as well. 500 ms is its own threshold.
+    pressAndHoldInterval: 500
+    onPressAndHold: function (mouse) { mouse.accepted = root.home !== null }
     onWheel: function (wheel) {
       root.broadcast(wheel.angleDelta.y > 0 ? "advance" : "retreat")
     }
@@ -964,7 +1023,7 @@ BarWidget {
   }
 
   // ---- settings panel -------------------------------------------------------
-  readonly property color ink: root.bar ? root.bar.foreground : Color.foreground
+  readonly property color ink: root.bar ? root.bar.foreground : Commons.Color.foreground
   readonly property color dim: Qt.darker(ink, 1.4)
 
   // A row of pill buttons, one per option, the current one lit.
@@ -1056,7 +1115,7 @@ BarWidget {
         // The panels themselves, big enough to read, always solid.
         PanelRow {
           anchors.horizontalCenter: parent.horizontalCenter
-          cellHeight: Style.space(34)
+          cellHeight: Math.min(Style.space(34), root.fitCellHeight(parent.width))
           cellText: root.cellChars()
           fill: root.panelFill(true)
           edge: root.panelBorder(true)
@@ -1303,7 +1362,7 @@ BarWidget {
           placeholderText: "Your own: http://umbrel.local:3006"
           text: root.customMempool
           readonly property bool acceptable: text.trim() === "" || root.validOrigin(text.trim())
-          color: acceptable ? root.ink : Color.urgent
+          color: acceptable ? root.ink : Commons.Color.urgent
           // Setting an instance makes it the one tried first; clearing it hands
           // that back to mempool.space.
           onEditingFinished: {
@@ -1341,7 +1400,7 @@ BarWidget {
           // Only a bare host[:port] is ever saved; anything else stays in the
           // field, marked, and is not written.
           readonly property bool acceptable: text.trim() === "" || root.validHost(text.trim())
-          color: acceptable ? root.ink : Color.urgent
+          color: acceptable ? root.ink : Commons.Color.urgent
           onEditingFinished: {
             var h = text.trim()
             if (acceptable && h !== root.bitaxeHost) root.save("bitaxeHost", h)
@@ -1374,7 +1433,11 @@ BarWidget {
     if (registeredBar && registeredBar.registerClickTarget) registeredBar.registerClickTarget(root)
   }
   onBarChanged: syncClickRegistration()
-  Component.onCompleted: syncClickRegistration()
+  Component.onCompleted: {
+    syncClickRegistration()
+    // Later: a rebuilt card's host does not know which placement it is yet.
+    Qt.callLater(start)
+  }
   Component.onDestruction: {
     if (registeredBar && registeredBar.unregisterClickTarget) registeredBar.unregisterClickTarget(root)
     statusProc.signal(15)
