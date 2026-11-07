@@ -55,6 +55,31 @@ omarchy plugin add https://github.com/kravens/omarchy-btclock --enable
 No accounts, no API keys, no external tools to install: it uses `bash`, `curl`,
 `jq`, `setsid` and `timeout`, all of which Omarchy already ships.
 
+## On Omarchy Mobile
+
+[Omarchy Mobile](https://omamobile.org)'s status bar hosts no bar widgets, so
+`omarchy plugin add` leaves nothing to see on a phone. BTClock lives on a home
+screen there instead, as a card that sizes its panels to fit:
+
+```bash
+git clone https://github.com/kravens/omarchy-btclock ~/.config/omamobile/widgets/kravens.btclock
+```
+
+Long-press the home screen, open **Widgets** and place **BTClock**. Tap the card
+for the next screen. Settings are in the card's settings sheet in edit mode; to
+hold one screen, list only that one under Screens. The card only fetches while
+you can see it, every three minutes by default. To update it, run
+`git -C ~/.config/omamobile/widgets/kravens.btclock pull`. To remove it, use the
+bin next to it in the Widgets sheet.
+
+If you run Omarchy's desktop bar on a phone instead (`omarchy bar reset`), the
+panels shrink to a fifth of a narrow screen. Its centre section sits under the
+camera, so `omarchy bar move kravens.btclock --section right` reads better. The
+full default widget set (`omarchy bar defaults`) does not fit at phone width with
+or without BTClock, so keep that bar's widgets to a few. Middle click and scroll
+have no touch equivalent there; the settings panel's Pause button and screen list
+do the same jobs.
+
 ## Controls
 
 | Action | Effect |
